@@ -1,0 +1,5 @@
+name: graphter-sim-simulate
+channels: [conda-forge, bioconda]
+dependencies:
+  - insilicoseq>=2.0
+  - badread>=0.4

@@ -1,0 +1,6 @@
+name: graphter-sim-pggb
+channels: [conda-forge, bioconda]
+dependencies:
+  - pggb>=0.6
+  - samtools
+  - htslib

@@ -1,0 +1,4 @@
+name: graphter-sim-minigraph
+channels: [conda-forge, bioconda]
+dependencies:
+  - minigraph
