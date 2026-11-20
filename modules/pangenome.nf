@@ -4,7 +4,7 @@
 
 // Concatenate genomes with PanSN-spec sequence names: <genome>#1#<contig>
 process PANSN_FASTA {
-    label 'pangenome'
+    label 'pansn'
     conda "${projectDir}/envs/pggb.yml"
 
     input:
