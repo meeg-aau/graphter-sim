@@ -55,6 +55,9 @@ process METASPADES {
     cp spades/contigs.fasta   ${sample}.contigs.fasta
     cp spades/assembly_graph_with_scaffolds.gfa ${sample}.assembly_graph_with_scaffolds.gfa
     cp spades/spades.log ${sample}.spades.log
+
+    # Published files are copied above; the rest of spades/ is only needed for debugging
+    if [[ "${params.keep_spades_dir}" != "true" ]]; then rm -rf spades; fi
     """
 
     stub:

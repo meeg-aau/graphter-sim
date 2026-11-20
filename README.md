@@ -100,6 +100,7 @@ separate option.
 | `--derep_min_qual` (`no`) | Keeps every genome. MiGA's own default (25) would drop low-quality genomes. |
 | `--derep_args` (`--only-ani`) | Extra options for `derep_wf` |
 | `--spades_ec_timeout` (`4.h`) | Maximum time for metaSPAdes' read error correction. If it runs longer, the task fails with a hint instead of running for days (see the caveat below). `0` means no limit. |
+| `--keep_spades_dir` (false) | Keep metaSPAdes' working directory (`spades/`: corrected reads, per-k graphs, temporary files) in each assembly task's work directory, for debugging. By default it is deleted after the published files are copied, which saves about 1.5–3 GB per assembly. If error correction times out, it is always kept. |
 | `--seed` (42) | Seed for the partition, the design and InSilicoSeq |
 | `--max_cpus`, `--max_memory` (this host's CPUs and 95% of its RAM), `--max_time` (240 h) | Upper limit for any single task. Larger requests (e.g. metaSPAdes' 64 GB) are capped to these instead of failing. With `-profile slurm`, set them to the largest node. |
 
