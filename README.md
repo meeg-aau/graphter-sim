@@ -42,7 +42,9 @@ background species (GTDB) ───────► simulate reads
    * Background genomes get log-normal depths.
    * Reads are simulated one genome at a time, so each genome gets exactly its
      intended depth.
-5. **Assembly.** metaSPAdes assembles each metagenome. The outputs are
+5. **Assembly.** Reads are error-corrected with `spades.py
+   --only-error-correction` (non-meta mode, see the caveat below), then
+   metaSPAdes (`--only-assembler`) assembles each metagenome. The outputs are
    `scaffolds.fasta` and `assembly_graph_with_scaffolds.gfa`. That graph is the
    simplified assembly graph plus the contig and scaffold paths (`P` and `J`
    lines); dropping those lines leaves exactly SPAdes'
@@ -59,6 +61,7 @@ background species (GTDB) ───────► simulate reads
 |---|---|
 | `metagenomes/assemblies/<mg>.assembly_graph_with_scaffolds.gfa` | Simplified metaSPAdes assembly graph (GFA), with scaffold paths |
 | `metagenomes/assemblies/<mg>.scaffolds.fasta` | Scaffolds |
+| `metagenomes/assemblies/<mg>.spades_ec.log`, `<mg>.spades.log` | SPAdes logs of read error correction (absent with `--spades_args=--only-assembler`) and of the assembly |
 | `pangenome/pangenome.gfa` | Pangenome graph |
 | `genomovars/genomovars.tsv` | Genomes per genomovar: `genomovar, representative, genome, is_representative, group` |
 | `design/target_groups.tsv` | Group of each target genome (`mg_only`, `pg_only`, `both`, `unused`) |
@@ -99,8 +102,8 @@ separate option.
 | `--genomovar_ani` (99.5) | ANI threshold for `derep_wf` |
 | `--derep_min_qual` (`no`) | Keeps every genome. MiGA's own default (25) would drop low-quality genomes. |
 | `--derep_args` (`--only-ani`) | Extra options for `derep_wf` |
-| `--spades_ec_timeout` (`4.h`) | Maximum time for metaSPAdes' read error correction. If it runs longer, the task fails with a hint instead of running for days (see the caveat below). `0` means no limit. |
-| `--keep_spades_dir` (false) | Keep metaSPAdes' working directory (`spades/`: corrected reads, per-k graphs, temporary files) in each assembly task's work directory, for debugging. By default it is deleted after the published files are copied, which saves about 1.5–3 GB per assembly. If error correction times out, it is always kept. |
+| `--spades_ec_timeout` (`4.h`) | Maximum time for the read error-correction step. If it runs longer, the task fails with exit 124 and a hint, without retrying. `0` means no limit. |
+| `--keep_spades_dir` (false) | Keep SPAdes' working directories (`ec/`: corrected reads; `spades/`: per-k graphs, temporary files) in each assembly task's work directory, for debugging. By default they are deleted after the published files are copied, which saves about 1.5–3 GB per assembly. If error correction times out, they are always kept. |
 | `--seed` (42) | Seed for the partition, the design and InSilicoSeq |
 | `--max_cpus`, `--max_memory` (this host's CPUs and 95% of its RAM), `--max_time` (240 h) | Upper limit for any single task. Larger requests (e.g. metaSPAdes' 64 GB) are capped to these instead of failing. With `-profile slurm`, set them to the largest node. |
 
@@ -139,16 +142,32 @@ genomes and 2 metagenomes at 10X.
 * `n_reads` follows InSilicoSeq's convention: it is the total number of reads
   across both mates.
 
-* metaSPAdes' read error correction (BayesHammer) can slow to near zero
-  throughput on some simulated read sets. It keeps every thread busy while
-  reading input at a few KB per minute. This was seen with SPAdes 4.3.0 and
-  3.15.5 on `-profile test` (E. coli, seed 42, metagenome `mg01`). There, each
-  half of the reads (one 72% GC background genome, and everything else) is
-  corrected in minutes, but the combination stalls. `METASPADES` stops after
-  `--spades_ec_timeout` (default 4 h) if assembly has not started, and fails
-  with exit 124 without retrying. Then either raise the limit or rerun with
-  `-resume --spades_args=--only-assembler` to skip error correction. The graphs
-  will then keep more error-induced tips and bubbles.
+* **Reads are error-corrected outside metagenomic mode.** In `--meta` mode,
+  SPAdes' read error correction (BayesHammer) first filters out singleton
+  k-mers with a counting quotient filter. The filter is sized at 2–4× the
+  estimated number of distinct k-mers, but each k-mer seen 3 or more times
+  takes 3 or more slots, so on deep metagenomes it can fill up (when the
+  estimate falls just below a power of two). With SPAdes 4.3.0 this caused:
+  * **a crawl:** above about 95% load, throughput collapses (14× slower per
+    read from 95.1% to 96.2% full, and worse after that). Error correction
+    then keeps every thread busy for days.
+  * **silent damage in runs that finish:** on an E. coli metagenome, 9.6% of
+    the genuine k-mers seen at least twice were dropped before correction
+    (checked against an exact KMC count). About 30% fewer bases were
+    corrected, and the result changed between runs on identical input.
+
+  See [ablab/spades#318](https://github.com/ablab/spades/issues/318).
+  `metaspades.py` always turns the filter on, so `METASPADES` instead corrects
+  the short reads with non-meta `spades.py --only-error-correction`, which
+  does not use it, and assembles the corrected reads with
+  `metaspades.py --only-assembler`. The only difference from metaSPAdes'
+  default is that singleton k-mers are not pre-filtered. This costs memory
+  (about 10–30% more for error correction) but gave equivalent results on the
+  same input, in about the same time. Long reads and `--spades_args` are only
+  passed to the assembly step. `--spades_ec_timeout` (default 4 h) remains as
+  a safety net. To skip error correction altogether, use
+  `--spades_args=--only-assembler`. The graphs will then keep more
+  error-induced tips and bubbles.
 
 ## License
 
