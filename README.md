@@ -168,6 +168,15 @@ genomes and 2 metagenomes at 10X.
   a safety net. To skip error correction altogether, use
   `--spades_args=--only-assembler`. The graphs will then keep more
   error-induced tips and bubbles.
+* BayesHammer (SPAdes 4.3.0) occasionally writes invalid bytes (e.g. `0xff`)
+  instead of a nucleotide into corrected reads: from none to a few hundred
+  bytes per sample of several million reads, varying between runs on the
+  same input. `metaspades.py`
+  then either crashes (`UnicodeDecodeError`) or assembles them silently.
+  `METASPADES` replaces these bytes with `N` before the assembly (sequence
+  lines only, so read lengths do not change) and adds the count to
+  `<mg>.spades_ec.log` (`graphter-sim: replaced <n> invalid bases with N`).
+  A count above 0 is also shown as a warning, but the task does not fail.
 
 ## License
 
