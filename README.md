@@ -42,6 +42,8 @@ background species (GTDB) ───────► simulate reads
    * Background genomes get log-normal depths.
    * Reads are simulated one genome at a time, so each genome gets exactly its
      intended depth.
+   * IUPAC ambiguity codes copied from the genomes into the reads are resolved
+     to random compatible bases (see the caveat below).
 5. **Assembly.** Reads are error-corrected with `spades.py
    --only-error-correction` (non-meta mode, see the caveat below), then
    metaSPAdes (`--only-assembler`) assembles each metagenome. The outputs are
@@ -66,7 +68,7 @@ background species (GTDB) ───────► simulate reads
 | `genomovars/genomovars.tsv` | Genomes per genomovar: `genomovar, representative, genome, is_representative, group` |
 | `design/target_groups.tsv` | Group of each target genome (`mg_only`, `pg_only`, `both`, `unused`) |
 | `design/metagenome_design.tsv` | Intended composition and depth of each metagenome |
-| `metagenomes/reads/<mg>.abundance.tsv` | Realized composition: genome length, read length, number of reads |
+| `metagenomes/reads/<mg>.abundance.tsv` | Realized composition: genome length, read length, number of reads, IUPAC codes resolved in the reads (`iupac_resolved`) |
 | `metagenomes/reads/<mg>_R{1,2}.fastq.gz` | Simulated reads |
 | `genomovars/derep/` | Raw MiGA `derep_wf` output (`genomospecies.tsv`, summaries) |
 | `pipeline_info/params_<timestamp>.json` | Parameters actually used (defaults, profiles and command line combined), plus the run name, session ID, command line and Nextflow version. Its timestamp matches the run's `report_`, `trace_` and `timeline_` files. |
@@ -104,7 +106,7 @@ separate option.
 | `--derep_args` (`--only-ani`) | Extra options for `derep_wf` |
 | `--spades_ec_timeout` (`4.h`) | Maximum time for the read error-correction step. If it runs longer, the task fails with exit 124 and a hint, without retrying. `0` means no limit. |
 | `--keep_spades_dir` (false) | Keep SPAdes' working directories (`ec/`: corrected reads; `spades/`: per-k graphs, temporary files) in each assembly task's work directory, for debugging. By default they are deleted after the published files are copied, which saves about 1.5–3 GB per assembly. If error correction times out, they are always kept. |
-| `--seed` (42) | Seed for the partition, the design and InSilicoSeq |
+| `--seed` (42) | Seed for the partition, the design, InSilicoSeq, Badread and the resolution of IUPAC codes in the reads |
 | `--max_cpus`, `--max_memory` (this host's CPUs and 95% of its RAM), `--max_time` (240 h) | Upper limit for any single task. Larger requests (e.g. metaSPAdes' 64 GB) are capped to these instead of failing. With `-profile slurm`, set them to the largest node. |
 
 `-profile test` runs a small configuration with 12 target genomes, 6 background
@@ -168,15 +170,23 @@ genomes and 2 metagenomes at 10X.
   a safety net. To skip error correction altogether, use
   `--spades_args=--only-assembler`. The graphs will then keep more
   error-induced tips and bubbles.
-* BayesHammer (SPAdes 4.3.0) occasionally writes invalid bytes (e.g. `0xff`)
-  instead of a nucleotide into corrected reads: from none to a few hundred
-  bytes per sample of several million reads, varying between runs on the
-  same input. `metaspades.py`
-  then either crashes (`UnicodeDecodeError`) or assembles them silently.
-  `METASPADES` replaces these bytes with `N` before the assembly (sequence
-  lines only, so read lengths do not change) and adds the count to
+* **IUPAC codes are resolved in the simulated reads.** Some NCBI assemblies
+  contain IUPAC ambiguity codes (`R Y K M S W B D H V`; e.g. 342 in 9 of 100
+  *H. pylori* genomes). InSilicoSeq and Badread copy them into the reads,
+  which no real sequencer would output. BayesHammer then writes an invalid
+  `0xff` byte for each code in a read it corrects, and `metaspades.py` either
+  crashes on it (`UnicodeDecodeError`) or assembles it silently. So each code
+  in the reads is replaced with a random base it allows (e.g. `R` with `A` or
+  `G`), seeded from `--seed`, the metagenome and the genome. Read lengths and
+  qualities do not change, and the count per genome is the `iupac_resolved`
+  column of `<mg>.abundance.tsv`. The genomes themselves, and so the
+  pangenome graph and the genomovars, keep the original sequences.
+
+  As a safety net, `METASPADES` also replaces any byte other than `ACGTN` in
+  the corrected reads with `N` before the assembly, and adds the count to
   `<mg>.spades_ec.log` (`graphter-sim: replaced <n> invalid bases with N`).
-  A count above 0 is also shown as a warning, but the task does not fail.
+  This count should be 0. A count above 0 is shown as a warning (the task
+  does not fail) and points to another source of invalid bytes.
 
 ## License
 

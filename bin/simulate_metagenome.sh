@@ -11,6 +11,12 @@
 #   SAMPLE_R1.fastq.gz, SAMPLE_R2.fastq.gz       Illumina pairs (InSilicoSeq)
 #   SAMPLE_long.fastq.gz                         Long reads (Badread; empty if not hybrid)
 #   SAMPLE.abundance.tsv                         Realized composition
+#
+# IUPAC ambiguity codes in the genomes are copied into the reads by the
+# simulators, but no sequencer outputs them, and BayesHammer turns them into
+# invalid 0xff bytes. resolve_iupac.py replaces each with a random compatible
+# base (seeded) in the reads only; the genomes are left unchanged. The number
+# of replaced characters per genome is the iupac_resolved column.
 
 set -euo pipefail
 
@@ -38,7 +44,7 @@ fi
 : > "${sample}_R1.fastq.gz"
 : > "${sample}_R2.fastq.gz"
 : > "${sample}_long.fastq.gz"   # stays empty unless hybrid
-printf "sample\tgenome\tsource\tgroup\tdepth\tgenome_length\tread_length\tn_reads\n" \
+printf "sample\tgenome\tsource\tgroup\tdepth\tgenome_length\tread_length\tn_reads\tiupac_resolved\n" \
   > "${sample}.abundance.tsv"
 
 k=0
@@ -51,26 +57,34 @@ while IFS=$'\t' read -r smp genome source group depth; do
   # InSilicoSeq --n_reads is the total number of reads (both mates)
   n_reads=$(awk -v d="$depth" -v g="$glen" -v l="$read_len" \
     'BEGIN { n = int(d * g / l + 0.999999); if (n % 2) n++; if (n < 2) n = 2; print n }')
-  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" "$smp" "$genome" "$source" "$group" \
-    "$depth" "$glen" "$read_len" "$n_reads" >> "${sample}.abundance.tsv"
-
   echo "[$sample] $genome ($source): ${depth}X, $glen bp, $n_reads reads" >&2
   tmp="tmp_${k}"
   iss generate --draft "$fasta" --model "$model" --n_reads "$n_reads" \
     --cpus "$cpus" --seed "$((seed + k))" --output "$tmp" --quiet >&2
+  n_iupac=0
   for r in 1 2; do
-    if [[ -s "${tmp}_R${r}.fastq.gz" ]]; then
-      cat "${tmp}_R${r}.fastq.gz" >> "${sample}_R${r}.fastq.gz"
-    else
-      gzip -c "${tmp}_R${r}.fastq" >> "${sample}_R${r}.fastq.gz"
-    fi
+    f="${tmp}_R${r}.fastq.gz"; [[ -s "$f" ]] || f="${tmp}_R${r}.fastq"
+    gzip -cdf "$f" |
+      resolve_iupac.py --seed "$seed" --key "$sample $genome R$r" --counts "${tmp}_R${r}.iupac" |
+      gzip -c >> "${sample}_R${r}.fastq.gz"
+    n_iupac=$((n_iupac + $(cat "${tmp}_R${r}.iupac")))
   done
   rm -f "${tmp}"_*
 
   if [[ -n "$long" ]]; then
     ldepth=$(awk -v d="$depth" -v s="$long_scale" 'BEGIN { printf "%.4f", d * s }')
     # shellcheck disable=SC2086
-    badread simulate --reference "$fasta" --quantity "${ldepth}x" $long_args \
-      2> "badread_${k}.log" | gzip -c >> "${sample}_long.fastq.gz"
+    badread simulate --reference "$fasta" --quantity "${ldepth}x" --seed "$((seed + k))" $long_args \
+      2> "badread_${k}.log" |
+      resolve_iupac.py --seed "$seed" --key "$sample $genome long" --counts "long_${k}.iupac" |
+      gzip -c >> "${sample}_long.fastq.gz"
+    n_iupac=$((n_iupac + $(cat "long_${k}.iupac")))
+    rm -f "long_${k}.iupac"
   fi
+
+  if (( n_iupac > 0 )); then
+    echo "[$sample] $genome: resolved $n_iupac IUPAC codes in the reads" >&2
+  fi
+  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" "$smp" "$genome" "$source" "$group" \
+    "$depth" "$glen" "$read_len" "$n_reads" "$n_iupac" >> "${sample}.abundance.tsv"
 done
