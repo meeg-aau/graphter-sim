@@ -80,6 +80,36 @@ process METASPADES {
         fi
         # Unpaired corrected reads (mates whose partner was discarded), if any
         if [[ -n "\$su" && -s "\$su" && -n "\$(gzip -cdf "\$su" | head -c 1)" ]]; then sr="-s \$su"; fi
+
+        # BayesHammer occasionally writes invalid bytes (e.g. 0xff) into
+        # corrected sequences. metaspades.py then either crashes on them
+        # (UnicodeDecodeError) or passes them on silently. Replace every byte
+        # other than ACGTN on sequence lines with N; headers and qualities are
+        # untouched and read lengths do not change. LC_ALL=C matches bytes
+        # >= 0x80 one by one. Output is uncompressed to save CPU.
+        sanitise() (  # <in.fastq[.gz]> <out.fastq> <file for the count>
+            set -o pipefail
+            gzip -cdf "\$1" | LC_ALL=C awk -v cnt="\$3" '
+                NR % 4 == 2 { n += gsub(/[^ACGTNacgtn]/, "N") }
+                { print }
+                END { print n + 0 > cnt }' > "\$2"
+        )
+        echo 0 > ec/unpaired.nbad
+        sanitise "\$r1c" ec/R1.clean.fastq ec/R1.nbad & p1=\$!
+        sanitise "\$r2c" ec/R2.clean.fastq ec/R2.nbad & p2=\$!
+        pids="\$p1 \$p2"
+        if [[ -n "\$sr" ]]; then
+            sanitise "\$su" ec/unpaired.clean.fastq ec/unpaired.nbad & pids="\$pids \$!"
+            sr="-s ec/unpaired.clean.fastq"
+        fi
+        for p in \$pids; do
+            if ! wait \$p; then echo "ERROR: failed to sanitise the corrected reads" >&2; exit 1; fi
+        done
+        r1c=ec/R1.clean.fastq; r2c=ec/R2.clean.fastq
+        a=\$(cat ec/R1.nbad); b=\$(cat ec/R2.nbad); c=\$(cat ec/unpaired.nbad)
+        msg="graphter-sim: replaced \$((a + b + c)) invalid bases with N (R1=\$a, R2=\$b, unpaired=\$c)"
+        echo "\$msg" >> ${sample}.spades_ec.log
+        if (( a + b + c > 0 )); then echo "WARN: ${sample}: \$msg" >&2; fi
     fi
 
     # Step 2: assembly
